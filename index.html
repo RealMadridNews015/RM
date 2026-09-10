@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0A0A0A">
-    <title></title>
+    <title>Real Madrid</title>
 
     <link href="https://vjs.zencdn.net/8.16.1/video-js.css" rel="stylesheet" />
     <script src="https://vjs.zencdn.net/8.16.1/video.min.js"></script>
@@ -281,9 +281,21 @@
             overflow: visible !important;
             align-items: center;
             gap: 2px;
-            visibility: visible !important;
-            opacity: 1 !important;
+            /* ⭐ لا نفرض الظهور — نترك التحكم للإخفاء التلقائي */
+            transition: opacity 0.35s ease, visibility 0.35s ease;
         }
+
+        /* ⭐⭐ إخفاء لوحة التحكم (بعد 3 ثوانٍ أو بضغط المستخدم على الفيديو) */
+        .video-js.vjs-controls-hidden .vjs-control-bar {
+            visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+        .video-js.vjs-controls-hidden .vjs-big-play-button {
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+
         .video-js .vjs-control-bar > * { flex-shrink: 0; }
         .video-js .vjs-progress-control {
             flex: 1 1 auto !important;
@@ -545,6 +557,9 @@
         let isAutoQuality = true;
         let isTransitioning = false;
 
+        // ⭐ مدة إخفاء لوحة التحكم (3 ثوانٍ)
+        const CONTROLS_HIDE_DELAY = 3000;
+
         // ============ TOAST ============
         const TELEGRAM_LINK = 'https://t.me/RealMadridNews015';
         function showToast() {
@@ -674,6 +689,7 @@
                 player = videojs(videoEl, {
                     controls: true, autoplay: true, preload: 'auto',
                     fluid: true, liveui: true,
+                    inactivityTimeout: CONTROLS_HIDE_DELAY,   // ⭐ 3 ثوانٍ
                     html5: {
                         hls: {
                             enableLowInitialPlaylist: true,
@@ -775,26 +791,95 @@
                         videoContainer.classList.remove('fullscreen-landscape');
                     });
 
-                    // ⭐ النقر على الفيديو → يدخل fullscreen يدوياً
-                    this.on('click', function() { toggleFullscreenLandscape(); });
+                    // ============================================================
+                    // ⭐⭐ إدارة إظهار / إخفاء لوحة التحكم
+                    // ============================================================
+                    const self = this;
+                    let hideTimer = null;
+                    let touchUsed = false;
+
+                    function clearHideTimer() {
+                        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+                    }
+
+                    // جدولة الإخفاء بعد 3 ثوانٍ (فقط أثناء التشغيل)
+                    function scheduleHide() {
+                        clearHideTimer();
+                        if (!self || self.paused()) return;
+                        hideTimer = setTimeout(function() {
+                            if (self && !self.paused()) {
+                                self.addClass('vjs-controls-hidden');
+                            }
+                        }, CONTROLS_HIDE_DELAY);
+                    }
+
+                    function showControls() {
+                        if (!self) return;
+                        clearHideTimer();
+                        self.removeClass('vjs-controls-hidden');
+                        scheduleHide();
+                    }
+
+                    function hideControls() {
+                        if (!self) return;
+                        clearHideTimer();
+                        self.addClass('vjs-controls-hidden');
+                    }
+
+                    function toggleControls() {
+                        if (!self) return;
+                        if (self.hasClass('vjs-controls-hidden')) showControls();
+                        else hideControls();
+                    }
+
+                    // إتاحتها للاستخدام خارجياً
+                    self.showControls = showControls;
+                    self.hideControls = hideControls;
+                    self.toggleControls = toggleControls;
+
+                    // ⭐ ضغطة واحدة على الفيديو → إخفاء / إظهار اللوحة
+                    this.on('click', function(e) {
+                        const t = e && e.target;
+                        if (t && t.closest && t.closest('.vjs-control-bar')) return; // تجاهل نقرات الأزرار
+                        toggleControls();
+                    });
+
+                    // ⭐ ضغطتان → ملء الشاشة (بديل النقرة الواحدة القديمة)
+                    this.on('dblclick', function(e) {
+                        const t = e && e.target;
+                        if (t && t.closest && t.closest('.vjs-control-bar')) return;
+                        toggleFullscreenLandscape();
+                    });
+
+                    // حركة الماوس (سطح المكتب) → إظهار اللوحة
+                    this.on('touchstart', function() { touchUsed = true; });
+                    this.on('mousemove', function() { if (!touchUsed) showControls(); });
+
+                    // التشغيل → إظهار اللوحة ثم إخفاؤها تلقائياً بعد 3 ثوانٍ
+                    this.on('play', function() { showControls(); });
+                    this.on('playing', function() { scheduleHide(); });
+
+                    // الإيقاف المؤقت / الانتهاء → تبقى اللوحة ظاهرة
+                    this.on('pause', function() { clearHideTimer(); self.removeClass('vjs-controls-hidden'); });
+                    this.on('ended', function() { clearHideTimer(); self.removeClass('vjs-controls-hidden'); });
 
                     // ⭐ fullscreenchange: فقط تحديث الكلاسات والحجم
                     this.on('fullscreenchange', function() {
                         const isFullscreen = this.isFullscreen ? this.isFullscreen() : false;
 
                         if (isFullscreen) {
-                            // دخول fullscreen → fullscreen-landscape + fill
                             videoContainer.classList.remove('normal');
                             videoContainer.classList.add('fullscreen-landscape');
                             setStretchMode('fill');
                             videoClose.style.display = 'none';
                         } else {
-                            // خروج من fullscreen → normal + contain
                             videoContainer.classList.add('normal');
                             videoContainer.classList.remove('fullscreen-landscape');
                             setStretchMode('contain');
                             videoClose.style.display = 'flex';
                         }
+                        // إظهار اللوحة بعد تغيير الوضع ثم إخفاؤها تلقائياً
+                        showControls();
                     });
                 });
 
@@ -946,7 +1031,6 @@
                 const isFullscreen = player.isFullscreen ? player.isFullscreen() : false;
 
                 if (!isFullscreen) {
-                    // الدخول إلى fullscreen
                     isTransitioning = true;
                     try {
                         const p = player.requestFullscreen();
@@ -957,10 +1041,8 @@
                             if (el && el.requestFullscreen) el.requestFullscreen();
                         } catch(e2) {}
                     }
-                    // بعد نجاح الطلب، طبق الوضع المناسب
                     setTimeout(function() { isTransitioning = false; }, 500);
                 } else {
-                    // الخروج من fullscreen
                     isTransitioning = true;
                     try { player.exitFullscreen(); } catch(e) {}
                     setTimeout(function() { isTransitioning = false; }, 500);
@@ -971,14 +1053,8 @@
 
             // تطبيق أولي
             setTimeout(function() {
-                const controlBar = player.el().querySelector('.vjs-control-bar');
-                if (controlBar) {
-                    controlBar.style.display = 'flex';
-                    controlBar.style.flexWrap = 'nowrap';
-                    controlBar.style.visibility = 'visible';
-                    controlBar.style.opacity = '1';
-                }
                 videoClose.style.display = 'flex';
+                if (player && player.showControls) player.showControls();
             }, 300);
 
             setTimeout(function() { if (player && player.el()) player.el().focus(); }, 400);
@@ -1036,7 +1112,7 @@
 
         window.addEventListener('load', function() { document.body.classList.add('loaded'); });
 
-        console.log('✅ المشغل جاهز — لا fullscreen تلقائي، فقط عند ضغط المستخدم');
+        console.log('✅ المشغل جاهز — إخفاء تلقائي للوحة التحكم بعد 3 ثوانٍ أو بضغط الفيديو');
     })();
 </script>
 
