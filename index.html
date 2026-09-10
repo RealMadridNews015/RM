@@ -280,27 +280,17 @@
             overflow: visible !important;
             align-items: center;
             gap: 2px;
-            transition: opacity 0.35s ease, visibility 0.35s ease;
+            transition: opacity 0.35s ease;
         }
 
-        /* ⭐ دفاعياً: منع video.js من إخفاء اللوحة تلقائياً */
-        .video-js.vjs-user-inactive .vjs-control-bar,
-        .video-js.vjs-user-inactive.vjs-playing .vjs-control-bar {
-            visibility: visible !important;
-            opacity: 1 !important;
-            transition: none !important;
-        }
-
-        /* ⭐⭐ إخفاء اللوحة عبر الكلاس الخاص بنا (يفوز لأنه لاحق في الترتيب) */
+        /* ⭐ إخفاء إجباري عند إضافة الكلاس */
         .video-js.vjs-controls-hidden .vjs-control-bar {
-            visibility: hidden !important;
             opacity: 0 !important;
             pointer-events: none !important;
-            transition: opacity 0.35s ease, visibility 0.35s ease !important;
         }
         .video-js.vjs-controls-hidden .vjs-big-play-button {
-            visibility: hidden !important;
             opacity: 0 !important;
+            pointer-events: none !important;
         }
 
         .video-js .vjs-control-bar > * { flex-shrink: 0; }
@@ -564,7 +554,7 @@
         let isAutoQuality = true;
         let isTransitioning = false;
 
-        // ⭐ مدة إخفاء لوحة التحكم (3 ثوانٍ)
+        // ⭐ مدة إخفاء لوحة التحكم (3 ثوانٍ من السكون)
         const CONTROLS_HIDE_DELAY = 3000;
 
         // ============ TOAST ============
@@ -695,7 +685,7 @@
                 player = videojs(videoEl, {
                     controls: true, autoplay: true, preload: 'auto',
                     fluid: true, liveui: true,
-                    inactivityTimeout: 0,   // ⭐ تعطيل إخفاء video.js التلقائي — نتحكم يدوياً
+                    inactivityTimeout: 0,   // ⭐ تعطيل إخفاء video.js تماماً — نحن نتحكم
                     html5: {
                         hls: {
                             enableLowInitialPlaylist: true,
@@ -770,8 +760,9 @@
                 });
                 stretchMenu.addEventListener('click', function(e) { e.stopPropagation(); });
 
-                // ============ تسجيل الأزرار ============
+                // ============ تسجيل الأزرار ومنطق الإظهار/الإخفاء ============
                 player.ready(function() {
+                    const self = this;
                     const controlBar = this.controlBar;
                     const fsIndex = controlBar.children().indexOf(controlBar.getChild('fullscreenToggle'));
                     if (fsIndex !== -1) controlBar.addChild('component', { el: qualityButton }, fsIndex);
@@ -797,96 +788,107 @@
                     });
 
                     // ============================================================
-                    // ⭐⭐ إدارة إظهار / إخفاء لوحة التحكم
+                    // ⭐⭐⭐ منطق لوحة التحكم الجديد:
+                    //   - أي نقرة في أي مكان → إظهار اللوحة + إعادة ضبط مؤقت 3 ثوانٍ
+                    //   - لا يوجد toggle، النقر لا يُخفي
+                    //   - الإخفاء يحدث فقط بعد 3 ثوانٍ من السكون
                     // ============================================================
-                    const self = this;
+                    const controlBarEl = self.controlBar.el();
+                    const playerRoot = self.el();
                     let hideTimer = null;
 
                     function clearHideTimer() {
                         if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
                     }
 
-                    // ⭐ جدولة الإخفاء بعد 3 ثوانٍ (تُستدعى كل مرة عند الإظهار)
+                    function isAnyMenuOpen() {
+                        const qm = document.getElementById('qualityMenu');
+                        const sm = document.getElementById('stretchMenu');
+                        return (qm && qm.classList.contains('open')) ||
+                               (sm && sm.classList.contains('open'));
+                    }
+
+                    function applyHide() {
+                        playerRoot.classList.add('vjs-controls-hidden');
+                        controlBarEl.style.opacity = '0';
+                        controlBarEl.style.pointerEvents = 'none';
+                    }
+
+                    function applyShow() {
+                        playerRoot.classList.remove('vjs-controls-hidden');
+                        controlBarEl.style.opacity = '1';
+                        controlBarEl.style.pointerEvents = 'auto';
+                    }
+
+                    // ⭐ جدولة الإخفاء بعد 3 ثوانٍ من السكون
                     function scheduleHide() {
                         clearHideTimer();
-                        if (!self || self.paused()) return;
+                        if (self.paused() || self.ended()) return;
                         hideTimer = setTimeout(function() {
-                            if (self && !self.paused()) {
-                                self.addClass('vjs-controls-hidden');
+                            if (self.paused() || self.ended()) return;
+                            if (isAnyMenuOpen()) {
+                                scheduleHide();   // قائمة مفتوحة → أعد الجدولة
+                                return;
                             }
+                            applyHide();
                         }, CONTROLS_HIDE_DELAY);
                     }
 
-                    // ⭐ إظهار اللوحة + إعادة تشغيل مؤقت الـ 3 ثوانٍ من جديد
+                    // ⭐ إظهار اللوحة + إعادة ضبط مؤقت 3 ثوانٍ من جديد
                     function showControls() {
-                        if (!self) return;
-                        clearHideTimer();
-                        self.removeClass('vjs-controls-hidden');
-                        scheduleHide();   // ← المؤقت يتجدد كل مرة
+                        applyShow();
+                        scheduleHide();
                     }
 
                     function hideControls() {
-                        if (!self) return;
                         clearHideTimer();
-                        self.addClass('vjs-controls-hidden');
+                        applyHide();
                     }
 
                     self.showControls = showControls;
                     self.hideControls = hideControls;
-                    self.clearHideTimer = clearHideTimer;
-                    self.scheduleHide = scheduleHide;
 
-                    // ⭐⭐⭐ معالج النقر على منطقة الفيديو:
-                    //   - نقرة واحدة  → يُظهر لوحة التحكم (ويُجدّد المؤقت)
-                    //   - نقرتان سريعتان → ملء الشاشة
-                    const playerEl = self.el();
-                    let lastTapTime = 0;
-
-                    function isInsideControlBar(target) {
-                        if (!target || !target.closest) return false;
-                        return !!(
-                            target.closest('.vjs-control-bar') ||
-                            target.closest('.vjs-quality-menu') ||
-                            target.closest('.vjs-stretch-menu') ||
-                            target.closest('.video-close')
-                        );
+                    // ⭐⭐⭐ أي نقرة في أي مكان داخل المشغل → إظهار اللوحة + إعادة المؤقت
+                    // ملاحظة: استخدام capture=true لالتقاط الحدث قبل video.js
+                    // ولا نحتاج للتحقق إن كان داخل لوحة التحكم أم لا — كل النقرات تُظهر
+                    function handleAnyClick() {
+                        showControls();
                     }
 
-                    playerEl.addEventListener('click', function(e) {
-                        if (isInsideControlBar(e.target)) return;
+                    // نستخدم click فقط (يُطلق على الجوال بعد touchend أيضاً)
+                    videoContainer.addEventListener('click', handleAnyClick, true);
 
+                    // ⭐ إضافي: حركة الماوس على سطح المكتب تُظهر اللوحة وتُعيد المؤقت
+                    let mouseMoveThrottle = null;
+                    videoContainer.addEventListener('mousemove', function() {
+                        if (mouseMoveThrottle) return;
+                        mouseMoveThrottle = setTimeout(function() { mouseMoveThrottle = null; }, 500);
+                        showControls();
+                    }, true);
+
+                    // ⭐ إضافي: أحداث اللمس على الجوال (لضمان استجابة سريعة)
+                    let touchThrottle = 0;
+                    videoContainer.addEventListener('touchstart', function() {
                         const now = Date.now();
-                        const isDoubleTap = (now - lastTapTime) < 300;
-                        lastTapTime = now;
+                        if (now - touchThrottle < 300) return;
+                        touchThrottle = now;
+                        showControls();
+                    }, { capture: true, passive: true });
 
-                        if (isDoubleTap) {
-                            // نقرتان → ملء الشاشة
-                            toggleFullscreenLandscape();
-                        } else {
-                            // نقرة واحدة → إظهار اللوحة (وإعادة تشغيل مؤقت 3 ثوانٍ)
-                            showControls();
-                        }
-                    });
-
-                    // ⭐ أي تفاعل مع أزرار لوحة التحكم يُجدّد المؤقت
-                    const controlBarEl = self.controlBar.el();
-                    ['click', 'touchstart'].forEach(function(evt) {
+                    // ⭐ عند أي تفاعل مع شريط التحكم (أزرار، قوائم، شريط التقدم) → إعادة المؤقت
+                    ['click', 'touchstart', 'mousedown', 'pointerdown', 'input'].forEach(function(evt) {
                         controlBarEl.addEventListener(evt, function() {
-                            clearHideTimer();
-                            if (!self.paused()) scheduleHide();
+                            showControls();
                         }, true);
                     });
 
-                    // التشغيل → إظهار اللوحة + بدء المؤقت
+                    // ⭐ أحداث المشغل
                     this.on('play', function() { showControls(); });
                     this.on('playing', function() { scheduleHide(); });
-
-                    // الإيقاف المؤقت / الانتهاء → اللوحة تبقى ظاهرة
-                    this.on('pause', function() { clearHideTimer(); self.removeClass('vjs-controls-hidden'); });
-                    this.on('ended', function() { clearHideTimer(); self.removeClass('vjs-controls-hidden'); });
-
-                    // بعد السحب على شريط التقدم → نُجدّد المؤقت
+                    this.on('pause', function() { clearHideTimer(); applyShow(); });
+                    this.on('ended', function() { clearHideTimer(); applyShow(); });
                     this.on('seeked', function() { showControls(); });
+                    this.on('volumechange', function() { showControls(); });
 
                     // fullscreenchange
                     this.on('fullscreenchange', function() {
@@ -1136,7 +1138,7 @@
 
         window.addEventListener('load', function() { document.body.classList.add('loaded'); });
 
-        console.log('✅ لوحة التحكم: تختفي بعد 3 ثوانٍ، وتعود بضغطة، والمؤقت يتجدد كل مرة');
+        console.log('✅ المشغل: إخفاء بعد 3 ثوانٍ من السكون، والنقر في أي مكان يُظهر اللوحة');
     })();
 </script>
 
