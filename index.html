@@ -253,7 +253,6 @@
             transition: transform 0.3s ease, object-fit 0.3s ease;
         }
 
-        /* ⭐ في الوضع الأفقي العادي → حجم مصغر مريح */
         @media (orientation: landscape) {
             .video-container.normal {
                 width: auto !important;
@@ -281,11 +280,10 @@
             overflow: visible !important;
             align-items: center;
             gap: 2px;
-            /* ⭐ لا نفرض الظهور — نترك التحكم للإخفاء التلقائي */
             transition: opacity 0.35s ease, visibility 0.35s ease;
         }
 
-        /* ⭐⭐ إخفاء لوحة التحكم (بعد 3 ثوانٍ أو بضغط المستخدم على الفيديو) */
+        /* ⭐⭐ إخفاء لوحة التحكم */
         .video-js.vjs-controls-hidden .vjs-control-bar {
             visibility: hidden !important;
             opacity: 0 !important;
@@ -677,7 +675,6 @@
             videoOverlay.classList.remove('closing');
             videoOverlay.classList.add('active');
             document.body.style.overflow = 'hidden';
-            // ⭐ دائماً نبدأ بالوضع المصغر
             videoContainer.classList.add('normal');
             videoContainer.classList.remove('fullscreen-landscape');
             isAutoQuality = true;
@@ -689,7 +686,7 @@
                 player = videojs(videoEl, {
                     controls: true, autoplay: true, preload: 'auto',
                     fluid: true, liveui: true,
-                    inactivityTimeout: CONTROLS_HIDE_DELAY,   // ⭐ 3 ثوانٍ
+                    inactivityTimeout: CONTROLS_HIDE_DELAY,
                     html5: {
                         hls: {
                             enableLowInitialPlaylist: true,
@@ -786,7 +783,6 @@
                         if (levels && levels.length > 0) buildQualityMenu(levels);
                         setAutoQuality();
                         setStretchMode('contain');
-                        // ⭐ لا fullscreen تلقائي أبداً
                         videoContainer.classList.add('normal');
                         videoContainer.classList.remove('fullscreen-landscape');
                     });
@@ -796,13 +792,11 @@
                     // ============================================================
                     const self = this;
                     let hideTimer = null;
-                    let touchUsed = false;
 
                     function clearHideTimer() {
                         if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
                     }
 
-                    // جدولة الإخفاء بعد 3 ثوانٍ (فقط أثناء التشغيل)
                     function scheduleHide() {
                         clearHideTimer();
                         if (!self || self.paused()) return;
@@ -828,42 +822,80 @@
 
                     function toggleControls() {
                         if (!self) return;
-                        if (self.hasClass('vjs-controls-hidden')) showControls();
-                        else hideControls();
+                        if (self.hasClass('vjs-controls-hidden')) {
+                            showControls();
+                        } else {
+                            hideControls();
+                        }
                     }
 
-                    // إتاحتها للاستخدام خارجياً
                     self.showControls = showControls;
                     self.hideControls = hideControls;
                     self.toggleControls = toggleControls;
 
-                    // ⭐ ضغطة واحدة على الفيديو → إخفاء / إظهار اللوحة
-                    this.on('click', function(e) {
-                        const t = e && e.target;
-                        if (t && t.closest && t.closest('.vjs-control-bar')) return; // تجاهل نقرات الأزرار
-                        toggleControls();
+                    // ⭐⭐⭐ الاعتماد على مستمع نيتف على العنصر الأب لضمان عمل النقر على أي مكان بالفيديو
+                    const playerEl = self.el();
+                    let lastClickTime = 0;
+                    let singleClickTimer = null;
+
+                    function isInsideControlBar(target) {
+                        if (!target || !target.closest) return false;
+                        return !!(
+                            target.closest('.vjs-control-bar') ||
+                            target.closest('.vjs-quality-menu') ||
+                            target.closest('.vjs-stretch-menu') ||
+                            target.closest('.video-close')
+                        );
+                    }
+
+                    function handleInteraction(e) {
+                        if (isInsideControlBar(e.target)) return;
+
+                        const now = Date.now();
+                        const delta = now - lastClickTime;
+                        lastClickTime = now;
+
+                        // إذا كانت هذه النقرة الثانية خلال 300ms → double click
+                        if (delta < 300) {
+                            if (singleClickTimer) {
+                                clearTimeout(singleClickTimer);
+                                singleClickTimer = null;
+                            }
+                            // ⭐ لا نعتبر النقرة الثانية جزءاً من toggle
+                            toggleFullscreenLandscape();
+                            return;
+                        }
+
+                        // نقرة واحدة → toggle بعد انتظار قصير للتأكد أنها ليست double
+                        if (singleClickTimer) clearTimeout(singleClickTimer);
+                        singleClickTimer = setTimeout(function() {
+                            singleClickTimer = null;
+                            toggleControls();
+                        }, 260);
+                    }
+
+                    // استخدام capture=true لالتقاط النقرة قبل وصولها لعناصر الفيديو الداخلية
+                    playerEl.addEventListener('click', handleInteraction, false);
+                    playerEl.addEventListener('touchend', function(e) {
+                        // على الجوال: touchend قد لا يطلق click إذا تم منع السلوك الافتراضي
+                        // لذا نتابع أيضاً عبر click في الغالب
+                    }, false);
+
+                    // للكمبيوتر: حركة الماوس تُظهر اللوحة
+                    let mouseMoveThrottle = null;
+                    playerEl.addEventListener('mousemove', function() {
+                        if (mouseMoveThrottle) return;
+                        mouseMoveThrottle = setTimeout(function() { mouseMoveThrottle = null; }, 400);
+                        showControls();
                     });
 
-                    // ⭐ ضغطتان → ملء الشاشة (بديل النقرة الواحدة القديمة)
-                    this.on('dblclick', function(e) {
-                        const t = e && e.target;
-                        if (t && t.closest && t.closest('.vjs-control-bar')) return;
-                        toggleFullscreenLandscape();
-                    });
-
-                    // حركة الماوس (سطح المكتب) → إظهار اللوحة
-                    this.on('touchstart', function() { touchUsed = true; });
-                    this.on('mousemove', function() { if (!touchUsed) showControls(); });
-
-                    // التشغيل → إظهار اللوحة ثم إخفاؤها تلقائياً بعد 3 ثوانٍ
+                    // التشغيل / الإيقاف
                     this.on('play', function() { showControls(); });
                     this.on('playing', function() { scheduleHide(); });
-
-                    // الإيقاف المؤقت / الانتهاء → تبقى اللوحة ظاهرة
                     this.on('pause', function() { clearHideTimer(); self.removeClass('vjs-controls-hidden'); });
                     this.on('ended', function() { clearHideTimer(); self.removeClass('vjs-controls-hidden'); });
 
-                    // ⭐ fullscreenchange: فقط تحديث الكلاسات والحجم
+                    // fullscreenchange
                     this.on('fullscreenchange', function() {
                         const isFullscreen = this.isFullscreen ? this.isFullscreen() : false;
 
@@ -878,7 +910,6 @@
                             setStretchMode('contain');
                             videoClose.style.display = 'flex';
                         }
-                        // إظهار اللوحة بعد تغيير الوضع ثم إخفاؤها تلقائياً
                         showControls();
                     });
                 });
@@ -1024,7 +1055,7 @@
             player.src({ src: src, type: 'application/x-mpegURL' });
             player.play().catch(function() {});
 
-            // ============ toggleFullscreenLandscape (عند ضغط المستخدم) ============
+            // ============ toggleFullscreenLandscape ============
             function toggleFullscreenLandscape() {
                 if (!player) return;
                 if (isTransitioning) return;
@@ -1112,7 +1143,7 @@
 
         window.addEventListener('load', function() { document.body.classList.add('loaded'); });
 
-        console.log('✅ المشغل جاهز — إخفاء تلقائي للوحة التحكم بعد 3 ثوانٍ أو بضغط الفيديو');
+        console.log('✅ المشغل جاهز — إخفاء تلقائي بعد 3 ثوانٍ + إظهار/إخفاء عند النقر على الفيديو');
     })();
 </script>
 
